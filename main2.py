@@ -1,6 +1,6 @@
 # =====================================================
-# COMPLETE HYBRID FAKE JOB DETECTION SYSTEM
-# Rule + ML + DistilBERT + Advanced Logging + Streamlit
+# HYBRID FAKE JOB DETECTION SYSTEM
+# Binary Classification: REAL (0% risk) or FAKE (any risk > 0%)
 # =====================================================
 
 import streamlit as st
@@ -83,7 +83,6 @@ FRAUD_PATTERNS = {
             r"contingent\s+upon\s+(payment|verification)",
         ],
         "weight": 3,
-        "risk_level": "HIGH"
     },
     "activation": {
         "patterns": [
@@ -96,7 +95,6 @@ FRAUD_PATTERNS = {
             r"initiation\s+fee",
         ],
         "weight": 2,
-        "risk_level": "HIGH"
     },
     "third_party": {
         "patterns": [
@@ -109,7 +107,6 @@ FRAUD_PATTERNS = {
             r"partner\s+(verification|portal|system)",
         ],
         "weight": 2,
-        "risk_level": "MEDIUM"
     },
     "pressure": {
         "patterns": [
@@ -124,7 +121,6 @@ FRAUD_PATTERNS = {
             r"don't\s+miss\s+out",
         ],
         "weight": 1,
-        "risk_level": "MEDIUM"
     },
     "payment": {
         "patterns": [
@@ -139,7 +135,6 @@ FRAUD_PATTERNS = {
             r"money\s+order",
         ],
         "weight": 3,
-        "risk_level": "CRITICAL"
     },
     "suspicious_contact": {
         "patterns": [
@@ -153,7 +148,6 @@ FRAUD_PATTERNS = {
             r"don't\s+contact\s+(company|hr|office)",
         ],
         "weight": 2,
-        "risk_level": "HIGH"
     },
     "vague_details": {
         "patterns": [
@@ -165,7 +159,6 @@ FRAUD_PATTERNS = {
             r"location\s+(flexible|remote|worldwide)",
         ],
         "weight": 1,
-        "risk_level": "LOW"
     },
     "too_good": {
         "patterns": [
@@ -177,7 +170,6 @@ FRAUD_PATTERNS = {
             r"guaranteed\s+income",
         ],
         "weight": 2,
-        "risk_level": "MEDIUM"
     }
 }
 
@@ -212,11 +204,8 @@ def compute_rule_score(text):
         
         if matched:
             score += data["weight"]
-            pattern_matches[category] = {
-                "weight": data["weight"],
-                "risk_level": data["risk_level"]
-            }
-            reasons.append(f"{category.replace('_', ' ').title()}: {data['risk_level']} risk")
+            pattern_matches[category] = {"weight": data["weight"]}
+            reasons.append(f"{category.replace('_', ' ').title()}")
 
     return score, reasons, pattern_matches
 
@@ -227,20 +216,20 @@ def normalize_rule_score(score, max_score=20):
 def get_ml_probability(text):
     """Get ML model probability"""
     if ml_model is None:
-        logger.warning("ML model not available, returning 0.5")
-        return 0.5
+        logger.warning("ML model not available, returning 0.0")
+        return 0.0
     try:
         proba = ml_model.predict_proba([text])[0][1]
         return float(proba)
     except Exception as e:
         logger.error(f"Error in ML prediction: {e}")
-        return 0.5
+        return 0.0
 
 def get_bert_probability(text):
     """Get BERT model probability"""
     if bert_model is None or tokenizer is None:
-        logger.warning("BERT model not available, returning 0.5")
-        return 0.5
+        logger.warning("BERT model not available, returning 0.0")
+        return 0.0
     
     try:
         inputs = tokenizer(
@@ -258,41 +247,27 @@ def get_bert_probability(text):
         return float(probs[0][1].item())
     except Exception as e:
         logger.error(f"Error in BERT prediction: {e}")
-        return 0.5
+        return 0.0
 
-def determine_risk_level(score):
-    """Determine overall risk level"""
-    if score >= 0.85:
-        return "CRITICAL"
-    elif score >= 0.7:
-        return "HIGH"
-    elif score >= 0.5:
-        return "MEDIUM"
-    elif score >= 0.3:
-        return "LOW"
-    else:
-        return "VERY LOW"
-
-def log_suspicious_job(text, result, filepath="suspicious_logs.json"):
-    """Log suspicious or fake jobs with full details"""
+def log_fake_job(text, result, filepath="fake_jobs_logs.json"):
+    """Log only FAKE jobs"""
     try:
         log_entry = {
             "timestamp": datetime.now().isoformat(),
-            "text": text[:500],  # Truncate for storage
+            "text_preview": text[:300],
             "analysis": result,
             "text_features": extract_text_features(text)
         }
 
-        # Append to JSON Lines format
         with open(filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(log_entry) + "\n")
         
-        logger.info(f"Logged suspicious job: {result['label']}")
+        logger.info(f"Logged FAKE job: Score {result['final_score']}")
     except Exception as e:
-        logger.error(f"Error logging suspicious job: {e}")
+        logger.error(f"Error logging fake job: {e}")
 
 def analyze_job(text):
-    """Complete job analysis combining all detection methods"""
+    """Complete job analysis - Binary: REAL or FAKE"""
     if not text.strip():
         return None
 
@@ -313,41 +288,38 @@ def analyze_job(text):
         0.3 * rule_norm        # Rules (30%)
     )
 
-    # Determine label and risk level
-    if final_score >= 0.75:
-        label = "FAKE"
-        risk_level = "CRITICAL"
-    elif final_score >= 0.6:
-        label = "SUSPICIOUS"
-        risk_level = "HIGH"
-    elif final_score >= 0.45:
-        label = "QUESTIONABLE"
-        risk_level = "MEDIUM"
+    # BINARY CLASSIFICATION: REAL (0%) or FAKE (any % > 0)
+    if final_score == 0.0:
+        label = "REAL"
+        status = "✅ LEGITIMATE"
+        color = "green"
     else:
-        label = "LIKELY REAL"
-        risk_level = "LOW"
+        label = "FAKE"
+        status = "🔴 FRAUDULENT"
+        color = "red"
 
     # Extract text features
     text_features = extract_text_features(text)
 
     result = {
         "label": label,
-        "risk_level": risk_level,
+        "status": status,
+        "color": color,
         "final_score": round(final_score, 4),
+        "final_score_percent": round(final_score * 100, 2),
         "rule_score": rule_score,
         "rule_reasons": rule_reasons,
         "pattern_matches": pattern_matches,
         "ml_probability": round(ml_prob, 4),
         "bert_probability": round(bert_prob, 4),
         "text_features": text_features,
-        "confidence": round(max(bert_prob, ml_prob), 4),
         "timestamp": datetime.now().isoformat()
     }
 
-    # Log if not real
-    if label != "LIKELY REAL":
-        log_suspicious_job(text, result)
-        logger.warning(f"Suspicious job detected: {label} (Score: {final_score})")
+    # Log if FAKE
+    if label == "FAKE":
+        log_fake_job(text, result)
+        logger.warning(f"FAKE JOB DETECTED - Score: {final_score}")
 
     return result
 
@@ -355,8 +327,8 @@ def analyze_job(text):
 # ANALYTICS & HISTORY
 # =====================================================
 
-def load_analysis_history(filepath="suspicious_logs.json"):
-    """Load historical analysis data"""
+def load_fake_jobs_history(filepath="fake_jobs_logs.json"):
+    """Load historical FAKE job data"""
     if not Path(filepath).exists():
         return pd.DataFrame()
     
@@ -373,15 +345,15 @@ def load_analysis_history(filepath="suspicious_logs.json"):
 
 def get_statistics():
     """Get detection statistics"""
-    df = load_analysis_history()
+    df = load_fake_jobs_history()
     if df.empty:
         return {}
     
     return {
-        "total_analyzed": len(df),
-        "fake_count": len(df[df['analysis'].apply(lambda x: x.get('label') == 'FAKE')]),
-        "suspicious_count": len(df[df['analysis'].apply(lambda x: x.get('label') == 'SUSPICIOUS')]),
-        "avg_score": float(df['analysis'].apply(lambda x: x.get('final_score', 0)).mean())
+        "total_fake_detected": len(df),
+        "avg_score": float(df['analysis'].apply(lambda x: x.get('final_score', 0)).mean()),
+        "highest_score": float(df['analysis'].apply(lambda x: x.get('final_score', 0)).max()),
+        "lowest_score": float(df['analysis'].apply(lambda x: x.get('final_score', 0)).min()),
     }
 
 # =====================================================
@@ -390,7 +362,7 @@ def get_statistics():
 
 def main():
     st.set_page_config(
-        page_title="Hybrid Fake Job Detector",
+        page_title="Fake Job Detector",
         page_icon="🚨",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -405,27 +377,38 @@ def main():
             font-size: 2.5em;
             margin-bottom: 10px;
         }
-        .metric-card {
-            background-color: #f0f2f6;
-            padding: 15px;
+        .fake-status {
+            background-color: #FF6B6B;
+            color: white;
+            padding: 20px;
             border-radius: 10px;
-            margin: 10px 0;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin: 15px 0;
         }
-        .fake-badge { background-color: #FF6B6B; color: white; padding: 5px 10px; border-radius: 5px; }
-        .suspicious-badge { background-color: #FFD93D; color: black; padding: 5px 10px; border-radius: 5px; }
-        .real-badge { background-color: #6BCB77; color: white; padding: 5px 10px; border-radius: 5px; }
+        .real-status {
+            background-color: #6BCB77;
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin: 15px 0;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<p class="main-title">🚨 Hybrid Fake Job Detection System</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-title">🚨 Fake Job Detection System</p>', unsafe_allow_html=True)
     
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Settings")
-        mode = st.radio("Select Mode", ["Analyze Job", "View History", "Statistics"])
+        st.header("⚙️ Navigation")
+        mode = st.radio("Select Mode", ["🔍 Analyze Job", "📋 Fake Jobs History", "📊 Statistics"])
 
     # Main content
-    if mode == "Analyze Job":
+    if mode == "🔍 Analyze Job":
         st.header("📝 Job Description Analysis")
         
         job_text = st.text_area(
@@ -437,11 +420,11 @@ def main():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            analyze_btn = st.button("🔍 Analyze", use_container_width=True)
+            analyze_btn = st.button("🔍 Analyze", use_container_width=True, key="analyze")
         with col2:
-            clear_btn = st.button("🗑️ Clear", use_container_width=True)
+            clear_btn = st.button("🗑️ Clear", use_container_width=True, key="clear")
         with col3:
-            example_btn = st.button("📋 Example", use_container_width=True)
+            example_btn = st.button("📋 Example", use_container_width=True, key="example")
 
         if clear_btn:
             st.rerun()
@@ -449,13 +432,12 @@ def main():
         if example_btn:
             example = """Dear Candidate,
 
-We are pleased to offer you a position! Before your contract is issued, you must activate your employee profile through our secure employment portal. 
+Congratulations! We are pleased to offer you a position! 
 
-This requires a one-time activation fee of $200 to verify your credentials. Please act quickly as we have limited slots available. 
+Before your contract is issued, you must activate your employee profile through our secure employment portal. This requires a one-time activation fee of $200 to verify your credentials. 
 
-Confirm your commitment immediately via WhatsApp to secure your position."""
-            job_text = example
-            st.text_area("Example Job Description:", value=example, height=300, disabled=True)
+Please act quickly as we have limited slots available. Confirm your commitment immediately via WhatsApp to secure your position. Do not contact our company directly about this."""
+            st.text_area("Example Fraudulent Job Description:", value=example, height=250, disabled=True)
 
         if analyze_btn:
             if not job_text.strip():
@@ -465,33 +447,28 @@ Confirm your commitment immediately via WhatsApp to secure your position."""
                     result = analyze_job(job_text)
 
                 if result:
-                    # Results header
-                    st.subheader("📊 Analysis Results")
-                    
-                    # Risk indicator
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("Final Score", f"{result['final_score']:.1%}")
-                    with col2:
-                        st.metric("Risk Level", result['risk_level'])
-                    with col3:
-                        st.metric("Confidence", f"{result['confidence']:.1%}")
-
-                    # Label with color coding
+                    # Display Status
                     st.markdown("---")
                     if result["label"] == "FAKE":
-                        st.error(f"🔴 **{result['label']}** - CRITICAL RISK")
-                    elif result["label"] == "SUSPICIOUS":
-                        st.warning(f"🟠 **{result['label']}** - HIGH RISK")
-                    elif result["label"] == "QUESTIONABLE":
-                        st.info(f"🟡 **{result['label']}** - MEDIUM RISK")
+                        st.markdown(f'<div class="fake-status">{result["status"]}</div>', unsafe_allow_html=True)
                     else:
-                        st.success(f"✅ **{result['label']}** - LOW RISK")
+                        st.markdown(f'<div class="real-status">{result["status"]}</div>', unsafe_allow_html=True)
 
-                    # Detailed scores
+                    # Display Score
                     st.markdown("---")
-                    st.subheader("🎯 Component Scores")
+                    st.subheader("🎯 Risk Score")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("Final Score", f"{result['final_score_percent']}%", 
+                                 delta=None, label_visibility="visible")
+                    with col2:
+                        st.metric("Classification", result['label'], 
+                                 delta=None, label_visibility="visible")
+
+                    # Component Scores
+                    st.markdown("---")
+                    st.subheader("📊 Component Analysis")
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
@@ -501,86 +478,78 @@ Confirm your commitment immediately via WhatsApp to secure your position."""
                     with col3:
                         st.metric("Rule Score", f"{result['rule_score']}/20")
 
-                    # Detected patterns
+                    # Detected Fraud Indicators
                     if result["rule_reasons"]:
                         st.markdown("---")
-                        st.subheader("⚠️ Detected Red Flags")
+                        st.subheader("⚠️ Fraud Indicators Detected")
                         for reason in result["rule_reasons"]:
-                            st.write(f"• {reason}")
+                            st.warning(f"• {reason}")
+                    else:
+                        st.markdown("---")
+                        st.info("✅ No fraud indicators detected")
 
-                    # Text features
+                    # Text Features
                     st.markdown("---")
-                    st.subheader("📈 Text Analysis")
+                    st.subheader("📈 Text Statistics")
                     features = result["text_features"]
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        st.metric("Word Count", f"{int(features['word_count'])}")
+                        st.metric("Words", f"{int(features['word_count'])}")
                     with col2:
                         st.metric("Avg Word Length", f"{features['avg_word_length']:.1f}")
                     with col3:
-                        st.metric("Uppercase Ratio", f"{features['uppercase_ratio']:.1%}")
+                        st.metric("Uppercase %", f"{features['uppercase_ratio']:.1%}")
                     with col4:
-                        st.metric("Special Chars", f"{features['special_char_ratio']:.1%}")
+                        st.metric("Special Chars %", f"{features['special_char_ratio']:.1%}")
 
-    elif mode == "View History":
-        st.header("📋 Analysis History")
-        df = load_analysis_history()
+    elif mode == "📋 Fake Jobs History":
+        st.header("📋 Detected Fake Jobs History")
+        df = load_fake_jobs_history()
         
         if df.empty:
-            st.info("No analysis history yet.")
+            st.info("ℹ️ No fake jobs detected yet.")
         else:
-            st.write(f"Total records: {len(df)}")
+            st.success(f"🔴 **Total FAKE Jobs Detected: {len(df)}**")
             
             # Display history
             display_df = pd.DataFrame({
                 'Timestamp': pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S'),
-                'Label': df['analysis'].apply(lambda x: x.get('label', 'N/A')),
-                'Score': df['analysis'].apply(lambda x: f"{x.get('final_score', 0):.2%}"),
-                'Risk Level': df['analysis'].apply(lambda x: x.get('risk_level', 'N/A')),
+                'Score (%)': df['analysis'].apply(lambda x: f"{x.get('final_score', 0)*100:.2f}%"),
+                'Rule Score': df['analysis'].apply(lambda x: x.get('rule_score', 0)),
+                'Text Preview': df['text_preview'].apply(lambda x: x[:60] + '...' if len(x) > 60 else x),
             })
             
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
             
             # Export option
-            if st.button("📥 Download as CSV"):
+            if st.button("📥 Download Fake Jobs as CSV"):
                 csv = display_df.to_csv(index=False)
                 st.download_button(
-                    label="Download",
+                    label="Download CSV",
                     data=csv,
-                    file_name=f"fake_job_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    file_name=f"fake_jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv"
                 )
 
-    elif mode == "Statistics":
+    elif mode == "📊 Statistics":
         st.header("📊 Detection Statistics")
         
         stats = get_statistics()
         
         if not stats:
-            st.info("No analysis data available yet.")
+            st.info("ℹ️ No detection data available yet.")
         else:
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Total Analyzed", stats.get('total_analyzed', 0))
+                st.metric("🔴 Total Fake Detected", int(stats.get('total_fake_detected', 0)))
             with col2:
-                st.metric("Fake Detected", stats.get('fake_count', 0))
+                st.metric("📈 Average Score", f"{stats.get('avg_score', 0)*100:.2f}%")
             with col3:
-                st.metric("Suspicious", stats.get('suspicious_count', 0))
+                st.metric("⬆️ Highest Score", f"{stats.get('highest_score', 0)*100:.2f}%")
             with col4:
-                st.metric("Avg Score", f"{stats.get('avg_score', 0):.1%}")
-            
-            # Visualizations
-            st.markdown("---")
-            
-            df = load_analysis_history()
-            if not df.empty:
-                # Chart data
-                chart_data = df['analysis'].apply(lambda x: x.get('label', 'Unknown')).value_counts()
-                
-                st.subheader("Detection Distribution")
-                st.bar_chart(chart_data)
+                st.metric("⬇️ Lowest Score", f"{stats.get('lowest_score', 0)*100:.2f}%")
 
 if __name__ == "__main__":
     main()
