@@ -2,7 +2,7 @@ import streamlit as st
 import joblib
 import re
 
-# Load model
+# Load trained ML model
 model = joblib.load("fake_job_model.pkl")
 
 # -------------------------
@@ -16,6 +16,10 @@ def rule_based_fake(text):
         "registration fee", "processing fee", "security deposit",
         "training fee", "pay before joining", "investment required",
         "earn money fast", "guaranteed income",
+        "verification payment", "small verification payment",
+        "pay for verification", "verification fee",
+        "pay to confirm job", "job confirmation payment",
+        "payment before interview", "fee for job",
 
         # Suspicious contact
         "whatsapp only", "telegram", "contact via dm",
@@ -37,19 +41,25 @@ def rule_based_fake(text):
         "pretend", "act as", "joke job"
     ]
 
-    # Check keyword matches
+    # 1️⃣ Keyword-based detection
     if any(flag in text for flag in red_flags):
         return True
 
-    # Detect suspicious salary pattern (very high daily pay)
+    # 2️⃣ Detect suspicious salary pattern (very high daily pay)
     salary_pattern = r"(₹|\$)?\s?\d{4,}\s?(per day|daily)"
     if re.search(salary_pattern, text):
         return True
 
+    # 3️⃣ Detect any sentence asking for payment
+    payment_pattern = r"(pay|payment|fee|deposit).{0,30}(job|verification|confirm|registration)"
+    if re.search(payment_pattern, text):
+        return True
+
     return False
 
+
 # -------------------------
-# UI
+# Streamlit UI
 # -------------------------
 st.title("🚨 Fake Job Detection System")
 
@@ -61,10 +71,12 @@ if st.button("Analyze"):
         st.warning("Please enter job description")
 
     else:
+        # Rule-based check first
         if rule_based_fake(job_text):
             st.error("🚨 FAKE Job (Rule-Based Detection)")
 
         else:
+            # ML Model Prediction
             prediction = model.predict([job_text])
 
             if prediction[0] == 1:
